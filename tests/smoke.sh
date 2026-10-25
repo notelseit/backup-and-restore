@@ -15,6 +15,11 @@ run=$(bash "$ROOT/bin/notelseit-backup" backup --config "$T/config.conf" | tail 
 bash "$ROOT/bin/notelseit-backup" verify --config "$T/config.conf" --run "$run"
 bash "$ROOT/bin/notelseit-backup" list --config "$T/config.conf" | grep -Fx "$run"
 tar -tzf "$T/out/$run/files-0.tar.gz" | grep -q 'index.txt'
+bash "$ROOT/bin/notelseit-restore" --backup-dir "$T/out/$run" --target "$T/restored"
+[[ $(cat "$T/restored/files-0/index.txt") == "sample data" ]]
+if bash "$ROOT/bin/notelseit-restore" --backup-dir "$T/out/$run" --target "$T/restored"; then
+  echo "ERROR: restore overwrote an existing target" >&2; exit 1
+fi
 printf 'corruption' >> "$T/out/$run/files-0.tar.gz"
 if bash "$ROOT/bin/notelseit-backup" verify --config "$T/config.conf" --run "$run"; then
   echo "ERROR: verification accepted corruption" >&2; exit 1
