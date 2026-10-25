@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Notelseit Backup & Restore 2.0 (universal Linux foundation)
+set -Eeuo pipefail
+umask 077
+
+usage() { echo "Usage: bash $0 {backup|verify|list} --config /absolute/config.conf [--run RUN_ID]" >&2; exit 2; }
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+log() { printf '[%s] %s\n' "$(date -u +%FT%TZ)" "$*" >&2; }
+[[ $# -ge 3 ]] || usage
+ACTION=$1; shift
+CONFIG=''; RUN=''
+while (($#)); do
+  case "$1" in
+    --config) (($#>=2)) || usage; CONFIG=$2; shift 2;;
+    --run) (($#>=2)) || usage; RUN=$2; shift 2;;
+    *) usage;;
+  esac
+done
+[[ $ACTION == backup || $ACTION == verify || $ACTION == list ]] || usage
+[[ $CONFIG == /* && -f $CONFIG && ! -L $CONFIG ]] || die "Config must be an existing absolute regular file, not a symlink"
+# Configuration is executable shell: use only locally administered, trusted files.
+# Refuse group/world writable config; secrets must live in a separate protected defaults-extra-file.
+(( ($(stat -c %a "$CONFIG" | tail -c 2) != 0) )) 2>/dev/null || true
+[[ $(stat -c %a "$CONFIG") =~ ^[0-7]+$ ]] || die "Cannot check configuration permissions"
+perm=$(stat -c %a "$CONFIG"); (( (8#$perm & 0022) == 0 )) || die "Config is group/world writable"
+# shellcheck source=/dev/null
+source "$CONFIG"
+: "${BACKUP_DEST:?BACKUP_DEST is required}"
+[[ $BACKUP_DEST == /* && $BACKUP_DEST != / ]] || die "BACKUP_DEST must be an absolute directory other than /"
+mkdir -p -- "$BACKUP_DEST"
+BACKUP_DEST=$(cd -- "$BACKUP_DEST" && pwd -P)
+[[ $BACKUP_DEST != / ]] || die "Invalid destination"
+command -v tar >/dev/null || die "tar missing"
+command -v sha256sum >/dev/null || die "sha256sum missing"
+command -v flock >/dev/null || die "flock missing"
+
+case "$ACTION" in
+  list) find "$BACKUP_DEST" -mindepth 1 -maxdepth 1 -type d -name 'run-*' -printf '%f\n' | sort; exit 0;;
+  verify)
+    [[ $RUN =~ ^run-[0-9]{8}T[0-9]{6}Z-[0-9]+$ ]] || die "Supply a valid --run ID"
+    base="$BACKUP_DEST/$RUN"
+    [[ -d $base && ! -L $base && -f $base/SHA256SUMS ]] || die "Run not found"
+    ( cd -- "$base" && sha256sum --check --status SHA256SUMS ) || die "Checksum verification failed"
+    log "Verified $RUN"
+    exit 0;;
+esac
+
+exec 9>"$BACKUP_DEST/.backup.lock"
+flock -n 9 || die "Another backup is running"
+run="run-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+tmp="$BACKUP_DEST/.incomplete-$run"
+final="$BACKUP_DEST/$run"
+[[ ! -e $tmp && ! -e $final ]] || die "Run already exists"
+mkdir -m 700 -- "$tmp"
+cleanup() { if [[ -d $tmp ]]; then log "Incomplete run retained for diagnosis: $tmp"; fi; }
+trap cleanup EXIT
+
+declare -p BACKUP_SOURCES >/dev/null 2>&1 || die "Define BACKUP_SOURCES bash array"
+(("${#BACKUP_SOURCES[@]}" > 0)) || die "At least one source required"
+: > "$tmp/MANIFEST.tsv"
+for src in "${BACKUP_SOURCES[@]}"; do
+  [[ $src == /* && -d $src && ! -L $src ]] || die "Invalid directory source: $src"
+  canonical=$(cd -- "$src" && pwd -P)
+  [[ $canonical != "$BACKUP_DEST" && $canonical != "$BACKUP_DEST/"* ]] || die "Source cannot be inside backup destination"
+  [[ $BACKUP_DEST != "$canonical/"* ]] || die "Destination cannot be inside a source"
+  idx=$(wc -l < "$tmp/MANIFEST.tsv")
+  out="files-$idx.tar.gz"
+  log "Archiving $canonical"
+  tar -C "$canonical" --one-file-system -czf "$tmp/$out" -- .
+  printf 'files\t%s\t%s\n' "$out" "$canonical" >> "$tmp/MANIFEST.tsv"
+done
+
+# Databases are optional; never put passwords on a command line or in tracked files.
+if (("${#BACKUP_DATABASES[@]}" > 0)); then
+  : "${MYSQL_DEFAULTS_FILE:?MYSQL_DEFAULTS_FILE required for database dumps}"
+  [[ $MYSQL_DEFAULTS_FILE == /* && -f $MYSQL_DEFAULTS_FILE ]] || die "Missing absolute MySQL defaults file"
+  [[ $(stat -c %a "$MYSQL_DEFAULTS_FILE") =~ ^[0-7]+$ ]] || die "Bad credentials mode"
+  mode=$(stat -c %a "$MYSQL_DEFAULTS_FILE"); (( (8#$mode & 0077) == 0 )) || die "MySQL credentials must have 0600 or stricter mode"
+  command -v mysqldump >/dev/null || die "mysqldump missing"
+  for db in "${BACKUP_DATABASES[@]}"; do
+    [[ $db =~ ^[a-zA-Z0-9_]+$ ]] || die "Unsafe database identifier"
+    out="mysql-$db.sql.gz"
+    log "Dumping database $db"
+    mysqldump --defaults-extra-file="$MYSQL_DEFAULTS_FILE" --single-transaction --quick --routines --events --triggers -- "$db" | gzip -c > "$tmp/$out"
+    gzip -t "$tmp/$out" || die "Corrupt dump"
+    printf 'database\t%s\t%s\n' "$out" "$db" >> "$tmp/MANIFEST.tsv"
+  done
+fi
+( cd -- "$tmp"; sha256sum -- *.tar.gz *.sql.gz MANIFEST.tsv 2>/dev/null > SHA256SUMS ) || die "Checksum generation failed"
+( cd -- "$tmp"; sha256sum --check --status SHA256SUMS ) || die "Verification failed"
+mv -- "$tmp" "$final"
+trap - EXIT
+log "Backup complete: $run"
+printf '%s\n' "$run"
