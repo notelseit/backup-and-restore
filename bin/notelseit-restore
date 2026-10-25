@@ -41,6 +41,13 @@ while IFS=$'\t' read -r kind archive source; do
       [[ $member == . || $member == ./ || $member == ./* ]] || die "Absolute or malformed archive path"
       [[ $member != *'/../'* && $member != *'/..' && $member != '../'* ]] || die "Parent traversal"
     done < <(tar -tzf "$BACKUP/$archive")
+    # Reject links and special files (including hard links, devices and FIFOs).
+    while IFS= read -r listing; do
+      case "${listing:0:1}" in
+        -|d) ;;
+        *) die "Unsafe archive member type (links and special files forbidden)";;
+      esac
+    done < <(tar -tvzf "$BACKUP/$archive")
     # GNU tar extraction into isolated new staging dir; never honor ownership.
     tar --no-same-owner --no-same-permissions --keep-old-files -xzf "$BACKUP/$archive" -C "$dest"
     printf '%s\t%s\n' "$dest" "$source"
