@@ -28,7 +28,7 @@ bash tests/smoke.sh
 
 **Security:** configuration files are executed as trusted Bash, not parsed as inert data. Do not load configuration received from untrusted parties. Credentials should not be included in a Git repository. MySQL dumps can contain personal data; protect backups at rest and prevent access over HTTP. Checksums detect accidental modification but **do not authenticate** data against an attacker able to modify both archives and manifests.
 
-**Limitations:** no remote transfer, encryption, automatic restore, database restore, retention, incremental chain, notification, panel adapter, or complete consistency checks for live-changing directory contents yet. No claim of disaster recovery readiness. Do not replace existing backup systems.
+**Limitations:** the optional SSH upload supports single completed runs with remote SHA-256 verification, but has no unattended scheduling, encryption at rest, remote retention, or end-to-end remote integration tests. Staging-only restore never overwrites a target or imports SQL automatically. There is no database restore, retention, incremental chain, notification, panel adapter, or complete consistency check for live-changing source contents. No claim of disaster recovery readiness. Do not replace existing backup systems.
 
 ## Roadmap
 
@@ -41,3 +41,19 @@ bash tests/smoke.sh
 ## Legacy
 
 Original scripts `backup.sh`, `backup_all.sh`, `backup_site_mysql`, `restore_file_tar` and `restore_sql.sh` are preserved unchanged. **Some contain destructive deletion commands and insecure restore defaults. Do not run them unreviewed.**
+
+## Experimental restore to staging (unprivileged account only)
+
+```bash
+bash bin/notelseit-restore --backup-dir /absolute/backups/run-YYYYMMDDTHHMMSSZ-PID --target /new/empty/staging/path
+```
+
+The target must **not exist**. This is not a production restore and must not be run against untrusted archives. Inspect staged data before any manual deployment. SQL files are copied, **never imported**.
+
+## Experimental SSH upload (non-root account)
+
+```bash
+bash bin/notelseit-push-ssh --backup-dir /absolute/backups/run-YYYYMMDDTHHMMSSZ-PID --ssh-user backupuser --ssh-host backup.example.net --remote-dir /srv/backup-archives
+```
+
+Requires `ssh` and `rsync` on both hosts, a dedicated remote account with write access, and **pre-provisioned verified host keys** in known_hosts. Does not use `--delete`. Remote checksum verification protects against accidental transfer corruption but not a compromised destination. Use server-side access controls and encryption at rest. Test with disposable data and destinations only. No automatic retention is provided.
