@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Opt-in SSH transport for one completed backup run. No deletion, no retention.
+set -Eeuo pipefail
+umask 077
+die() { echo "ERROR: $*" >&2; exit 1; }
+[[ $# -eq 8 ]] || die "Usage: bash $0 --backup-dir /absolute/run --ssh-user USER --ssh-host HOST --remote-dir /absolute/dir"
+BACKUP=''; USER=''; HOST=''; REMOTE=''
+while (($#)); do
+  case "$1" in
+    --backup-dir) BACKUP=$2; shift 2;;
+    --ssh-user) USER=$2; shift 2;;
+    --ssh-host) HOST=$2; shift 2;;
+    --remote-dir) REMOTE=$2; shift 2;;
+    *) die "Unknown argument";;
+  esac
+done
+[[ $BACKUP == /* && -d $BACKUP && ! -L $BACKUP ]] || die "Backup directory must exist"
+[[ $USER =~ ^[a-z_][a-z0-9_-]*$ && $USER != root ]] || die "Use a dedicated non-root remote account"
+[[ $HOST =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || die "Invalid SSH host"
+[[ $REMOTE =~ ^/[a-zA-Z0-9_./-]+$ && $REMOTE != / && $REMOTE != *'..'* ]] || die "Invalid remote directory"
+command -v ssh >/dev/null || die "ssh not found"
+command -v rsync >/dev/null || die "rsync not found"
+BACKUP=$(cd -- "$BACKUP" && pwd -P)
+RUN=$(basename -- "$BACKUP")
+[[ $RUN =~ ^run-[0-9]{8}T[0-9]{6}Z-[0-9]+$ ]] || die "Not a completed run"
+[[ -f "$BACKUP/SHA256SUMS" ]] || die "Missing checksums"
+( cd -- "$BACKUP"; sha256sum --check --status SHA256SUMS ) || die "Local verification failed"
+REMOTE_TARGET="${USER}@${HOST}"
+SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=yes)
+# All interpolated remote path segments are strictly limited to safe characters.
+ssh "${SSH_OPTS[@]}" -- "$REMOTE_TARGET" "mkdir -p -- '$REMOTE' && chmod 700 -- '$REMOTE'"
+rsync -a -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=yes" -- "$BACKUP/" "$REMOTE_TARGET:$REMOTE/.incoming-$RUN/"
+ssh "${SSH_OPTS[@]}" -- "$REMOTE_TARGET" "cd '$REMOTE/.incoming-$RUN' && sha256sum -c --status SHA256SUMS"
+# Atomic publish on the same remote filesystem; refuse overwrite.
+ssh "${SSH_OPTS[@]}" -- "$REMOTE_TARGET" "test ! -e '$REMOTE/$RUN' && mv -- '$REMOTE/.incoming-$RUN' '$REMOTE/$RUN'"
+echo "Remote run verified: $RUN"

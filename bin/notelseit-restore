@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Restore to a NEW, EMPTY staging directory only. Never restores in place.
+set -Eeuo pipefail
+umask 077
+usage() { echo "Usage: bash $0 --backup-dir /absolute/run-directory --target /absolute/new-empty-dir" >&2; exit 2; }
+die() { echo "ERROR: $*" >&2; exit 1; }
+[[ $# -eq 4 ]] || usage
+BACKUP=''; TARGET=''
+while (($#)); do
+  case $1 in
+    --backup-dir) BACKUP=$2; shift 2;;
+    --target) TARGET=$2; shift 2;;
+    *) usage;;
+  esac
+done
+[[ $BACKUP == /* && -d $BACKUP && ! -L $BACKUP ]] || die "Invalid backup directory"
+[[ $TARGET == /* && $TARGET != / && ! -e $TARGET && ! -L $TARGET ]] || die "Target must be a new path"
+BACKUP=$(cd -- "$BACKUP" && pwd -P)
+PARENT=$(dirname -- "$TARGET")
+[[ -d $PARENT && ! -L $PARENT ]] || die "Target parent must exist and not be a symlink"
+PARENT=$(cd -- "$PARENT" && pwd -P)
+TARGET="$PARENT/$(basename -- "$TARGET")"
+[[ $TARGET != "$BACKUP" && $TARGET != "$BACKUP/"* && $BACKUP != "$TARGET/"* ]] || die "Overlapping paths"
+[[ -f $BACKUP/SHA256SUMS && -f $BACKUP/MANIFEST.tsv ]] || die "Missing manifest"
+( cd -- "$BACKUP" && sha256sum --check --status SHA256SUMS ) || die "Checksum validation failed"
+# Ensure all archives are ordinary files and refuse unsafe tar entries. No extraction as root.
+[[ $EUID -ne 0 ]] || die "Restore must run as an unprivileged account"
+mkdir -m 700 -- "$TARGET"
+cleanup() { echo "Staging retained at $TARGET; inspect before use" >&2; }
+trap cleanup EXIT
+i=0
+while IFS=$'\t' read -r kind archive source; do
+  [[ $kind == files || $kind == database ]] || die "Invalid manifest type"
+  [[ $archive =~ ^(files-[0-9]+\.tar\.gz|mysql-[A-Za-z0-9_]+\.sql\.gz)$ ]] || die "Invalid manifest filename"
+  [[ -f $BACKUP/$archive && ! -L $BACKUP/$archive ]] || die "Invalid archive"
+  if [[ $kind == files ]]; then
+    dest="$TARGET/files-$i"
+    mkdir -m 700 -- "$dest"
+    # Require all paths to be relative and free of traversal; reject links and device files.
+    while IFS= read -r member; do
+      [[ $member == . || $member == ./ || $member == ./* ]] || die "Absolute or malformed archive path"
+      [[ $member != *'/../'* && $member != *'/..' && $member != '../'* ]] || die "Parent traversal"
+    done < <(tar -tzf "$BACKUP/$archive")
+    # Reject links and special files (including hard links, devices and FIFOs).
+    while IFS= read -r listing; do
+      case "${listing:0:1}" in
+        -|d) ;;
+        *) die "Unsafe archive member type (links and special files forbidden)";;
+      esac
+    done < <(tar -tvzf "$BACKUP/$archive")
+    # GNU tar extraction into isolated new staging dir; never honor ownership.
+    tar --no-same-owner --no-same-permissions --keep-old-files -xzf "$BACKUP/$archive" -C "$dest"
+    printf '%s\t%s\n' "$dest" "$source"
+  else
+    cp -- "$BACKUP/$archive" "$TARGET/$archive"
+    printf 'Database SQL archive staged (not imported): %s\n' "$TARGET/$archive"
+  fi
+  i=$((i+1))
+done < "$BACKUP/MANIFEST.tsv"
+trap - EXIT
+echo "Restore staged successfully in $TARGET"
