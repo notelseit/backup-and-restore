@@ -20,7 +20,6 @@ done
 [[ $CONFIG == /* && -f $CONFIG && ! -L $CONFIG ]] || die "Config must be an existing absolute regular file, not a symlink"
 # Configuration is executable shell: use only locally administered, trusted files.
 # Refuse group/world writable config; secrets must live in a separate protected defaults-extra-file.
-(( ($(stat -c %a "$CONFIG" | tail -c 2) != 0) )) 2>/dev/null || true
 [[ $(stat -c %a "$CONFIG") =~ ^[0-7]+$ ]] || die "Cannot check configuration permissions"
 perm=$(stat -c %a "$CONFIG"); (( (8#$perm & 0022) == 0 )) || die "Config is group/world writable"
 # shellcheck source=/dev/null
@@ -86,7 +85,7 @@ if (("${#BACKUP_DATABASES[@]}" > 0)); then
     printf 'database\t%s\t%s\n' "$out" "$db" >> "$tmp/MANIFEST.tsv"
   done
 fi
-( cd -- "$tmp"; sha256sum -- *.tar.gz *.sql.gz MANIFEST.tsv 2>/dev/null > SHA256SUMS ) || die "Checksum generation failed"
+( cd -- "$tmp"; files=(MANIFEST.tsv); for f in *.tar.gz *.sql.gz; do [[ -f $f ]] && files+=("$f"); done; sha256sum -- "${files[@]}" > SHA256SUMS ) || die "Checksum generation failed"
 ( cd -- "$tmp"; sha256sum --check --status SHA256SUMS ) || die "Verification failed"
 mv -- "$tmp" "$final"
 trap - EXIT
