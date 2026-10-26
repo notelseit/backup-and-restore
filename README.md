@@ -124,3 +124,9 @@ python3 bin/notelseit-retention-gfs --backup-root /srv/encrypted-exports --type 
 ```
 
 Output classes: `KEEP` (protected and why) and `CANDIDATE_ONLY` (not selected by this simulation). **NO delete or apply option exists.** Corrupt data, incomplete runs, unknown contents and sidecar failures block the plan; it does not attempt to repair them. This is count-based GFS selection, not a guarantee that backups exist on every required date. Neither SHA-256 nor the GFS simulation proves actual recoverability or the availability of private decryption keys. Never turn candidates into automatic deletion based on this output.
+
+## Phase 9: disaster recovery preflight (read-only)
+
+`python3 bin/notelseit-dr-preflight --backup-dir /absolute/run-YYYYMMDDTHHMMSSZ-PID` validates checksums, manifest coverage and archive structure before any attempted restore. It never extracts, overwrites or deletes data. A successful preflight is **not** an end-to-end disaster recovery certificate: the operator still must test restoring a complete offsite copy to an isolated server, including databases, private-key recovery, service configuration and applications. The archive preflight does not guarantee capacity, live-database consistency or credentials.
+
+Release gates before enabling destructive retention: (1) all CI jobs pass; (2) restore a remote encrypted artifact using a backed-up private identity; (3) import database into an isolated MariaDB/MySQL instance and validate expected data; (4) test failure on corrupted archives and missing keys; (5) ensure two independent verified copies and a tested recovery procedure; (6) document and rehearse rollback. **No unattended deletion or production rollout is enabled by this project.**
