@@ -17,3 +17,26 @@ jobs:
         run: bash tests/security.sh
       - name: Smoke test
         run: bash tests/smoke.sh && bash tests/security.sh
+
+  mariadb-integration:
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_ROOT_PASSWORD: test_local_only_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MariaDB client
+        run: sudo apt-get update && sudo apt-get install -y mariadb-client
+      - name: Test actual backup and restore
+        env:
+          TEST_MYSQL_PASSWORD: test_local_only_password
+        run: bash tests/mariadb-integration.sh
