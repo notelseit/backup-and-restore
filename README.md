@@ -111,3 +111,16 @@ python3 bin/notelseit-retention-audit --backup-root /srv/encrypted-exports --typ
 ```
 
 This tool assumes the root contains only runs and the backup lock file, or only paired `.tar.age` and `.sha256` files. Incomplete transfers and unknown files block evaluation. A `CANDIDATE_ONLY` entry is **not permission to delete**: SHA-256 cannot prove recovery success, key availability, independent offsite copies or authenticity against an attacker who can replace manifests. No GFS grandfather-father-son selection, time-based retention, cross-destination coordination, locking or destructive operations are implemented. Do not automate deletion from this output.
+
+## Phase 8: GFS dry-run retention (daily/weekly/monthly)
+
+The new `bin/notelseit-retention-gfs` selects a union of the newest backup from each available UTC day, ISO week (Monday-starting, ISO week-year) and UTC calendar month. The quotas count **periods containing a valid backup**, not calendar slots with no backup. A backup selected by multiple quotas is kept once, with combined reasons. All artifacts are first verified with the existing fail-closed retention audit logic.
+
+Default policy: **7 daily, 4 weekly, 12 monthly**. Example:
+
+```bash
+python3 bin/notelseit-retention-gfs --backup-root /srv/notelseit-backups --type local --daily 7 --weekly 4 --monthly 12
+python3 bin/notelseit-retention-gfs --backup-root /srv/encrypted-exports --type encrypted --daily 7 --weekly 4 --monthly 12
+```
+
+Output classes: `KEEP` (protected and why) and `CANDIDATE_ONLY` (not selected by this simulation). **NO delete or apply option exists.** Corrupt data, incomplete runs, unknown contents and sidecar failures block the plan; it does not attempt to repair them. This is count-based GFS selection, not a guarantee that backups exist on every required date. Neither SHA-256 nor the GFS simulation proves actual recoverability or the availability of private decryption keys. Never turn candidates into automatic deletion based on this output.
