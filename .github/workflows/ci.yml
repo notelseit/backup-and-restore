@@ -17,3 +17,61 @@ jobs:
         run: bash tests/security.sh
       - name: Smoke test
         run: bash tests/smoke.sh && bash tests/security.sh
+
+  mariadb-integration:
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_ROOT_PASSWORD: test_local_only_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MariaDB client
+        run: sudo apt-get update && sudo apt-get install -y mariadb-client
+      - name: Test actual backup and restore
+        env:
+          TEST_MYSQL_PASSWORD: test_local_only_password
+        run: bash tests/mariadb-integration.sh
+
+  ssh-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SSH server and rsync
+        run: sudo apt-get update && sudo apt-get install -y openssh-server openssh-client rsync
+      - name: Set up isolated SSH transport
+        run: |
+          sudo useradd --create-home --shell /bin/bash backupci
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keygen -q -t ed25519 -N "" -f ~/.ssh/id_ed25519
+          sudo install -d -m 700 -o backupci -g backupci /home/backupci/.ssh
+          sudo cp ~/.ssh/id_ed25519.pub /home/backupci/.ssh/authorized_keys
+          sudo chown backupci:backupci /home/backupci/.ssh/authorized_keys
+          sudo chmod 600 /home/backupci/.ssh/authorized_keys
+          sudo mkdir -p /run/sshd
+          sudo systemctl start ssh
+          ssh-keyscan -H 127.0.0.1 >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 600 ~/.ssh/known_hosts
+          ssh -o BatchMode=yes backupci@127.0.0.1 'echo ssh-ready'
+      - name: SSH round trip and failure scenarios
+        run: bash tests/ssh-integration.sh
+
+  encryption:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install age
+        run: sudo apt-get update && sudo apt-get install -y age
+      - name: Check bash syntax
+        run: bash -n bin/notelseit-encrypt bin/notelseit-decrypt tests/encryption.sh
+      - name: Encryption/decryption round trip
+        run: bash tests/encryption.sh

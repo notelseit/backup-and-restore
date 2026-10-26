@@ -71,3 +71,19 @@ bash bin/notelseit-retention-plan --backup-root /srv/notelseit-backups --keep-la
 This prints candidates by run timestamp. **It never deletes backup data**; it is not yet a safe automated retention engine. Retention must additionally account for remote copies, verified integrity, and future incremental chains.
 
 Security tests use synthetic tar files to ensure unsafe members are rejected. End-to-end MySQL restore, remote SSH integration, encryption at rest and automatic retention remain unimplemented and require further work. Do not interpret passing tests as a production disaster-recovery guarantee.
+
+## Phase 5 (experimental): recipient-encrypted offline archives
+
+Encrypted export uses the open-source `age` command-line tool and an administrator-managed public recipient key. This workflow is **opt-in** and does not change unencrypted local backup storage. Never publish identity/private-key material in Git or alongside backups. Use a separate machine to escrow the private identity and verify that recovery remains possible.
+
+```bash
+age-keygen -o /secure/identity.txt
+chmod 600 /secure/identity.txt
+age-keygen -y /secure/identity.txt  # prints public recipient age1...
+bash bin/notelseit-encrypt --backup-dir /srv/backups/run-YYYYMMDDTHHMMSSZ-PID --recipient age1... --output /srv/offsite/run.tar.age
+bash bin/notelseit-decrypt --input /srv/offsite/run.tar.age --identity /secure/identity.txt --output /isolated/newly-decrypted.tar
+```
+
+The decrypt command **never extracts or restores** files: an administrator must review the resulting tar in an isolated environment. Never put decrypted archives inside publicly served directories.
+
+Limitations: encrypted export is a standalone artifact and is not yet integrated with `notelseit-push-ssh`, automated schedules or retention. Current backup runs and unencrypted staging remain on disk. For secure remote-only workflows, the transport needs an explicit encrypted-artifact mode, and raw backup transport should be disabled by policy. The package is not production-ready.
