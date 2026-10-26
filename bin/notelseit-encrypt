@@ -36,5 +36,5 @@ tar --format=posix -C "$(dirname -- "$RUN_DIR")" -cf - -- "$(basename -- "$RUN_D
   age -r "$RECIPIENT" -o "$OUTPUT"
 [[ -s $OUTPUT ]] || die "Encrypted output is empty"
 trap - EXIT
-sha256sum -- "$OUTPUT" > "$OUTPUT.sha256"
+( cd -- "$OUT_PARENT"; sha256sum -- "$(basename -- "$OUTPUT")" > "$(basename -- "$OUTPUT").sha256" )
 printf 'Encrypted artifact: %s\n' "$OUTPUT"

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Upload one encrypted age artifact (never an unencrypted backup).
+set -Eeuo pipefail
+umask 077
+die(){ printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+[[ $# -eq 8 ]] || die "Usage: bash $0 --input /absolute/file.tar.age --ssh-user USER --ssh-host HOST --remote-dir /absolute/path"
+INPUT=''; USER=''; HOST=''; REMOTE=''
+while (($#)); do
+ case $1 in
+  --input) INPUT=$2; shift 2;;
+  --ssh-user) USER=$2; shift 2;;
+  --ssh-host) HOST=$2; shift 2;;
+  --remote-dir) REMOTE=$2; shift 2;;
+  *) die "Invalid argument";;
+ esac
+done
+[[ $INPUT == /* && -f $INPUT && ! -L $INPUT && $INPUT == *.tar.age ]] || die "Input must be a regular age artifact"
+[[ $USER =~ ^[a-z_][a-z0-9_-]*$ && $USER != root ]] || die "Dedicated non-root SSH user required"
+[[ $HOST =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || die "Unsafe hostname"
+[[ $REMOTE =~ ^/[a-zA-Z0-9_./-]+$ && $REMOTE != / && $REMOTE != *'..'* ]] || die "Unsafe remote directory"
+command -v ssh >/dev/null || die "ssh required"
+command -v rsync >/dev/null || die "rsync required"
+INPUT=$(cd -- "$(dirname -- "$INPUT")" && pwd -P)/$(basename -- "$INPUT")
+NAME=$(basename -- "$INPUT")
+[[ $NAME =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*\.tar\.age$ ]] || die "Unsafe input name"
+[[ -f $INPUT.sha256 && ! -L $INPUT.sha256 ]] || die "Checksum sidecar required"
+( cd -- "$(dirname -- "$INPUT")"; sha256sum --check --status "$NAME.sha256" ) || die "Local checksum invalid"
+TARGET="$USER@$HOST"
+SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=yes)
+ssh "${SSH_OPTS[@]}" -- "$TARGET" "mkdir -p -- '$REMOTE' && chmod 700 -- '$REMOTE'"
+# Never overwrite a completed remote artifact. A staging area is verified first.
+ssh "${SSH_OPTS[@]}" -- "$TARGET" "test ! -e '$REMOTE/$NAME' && test ! -e '$REMOTE/$NAME.sha256' && test ! -e '$REMOTE/.incoming-$NAME'"
+ssh "${SSH_OPTS[@]}" -- "$TARGET" "mkdir -m 700 -- '$REMOTE/.incoming-$NAME'"
+rsync -a -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=yes" -- "$INPUT" "$INPUT.sha256" "$TARGET:$REMOTE/.incoming-$NAME/"
+ssh "${SSH_OPTS[@]}" -- "$TARGET" "cd '$REMOTE/.incoming-$NAME' && sha256sum -c --status '$NAME.sha256'"
+ssh "${SSH_OPTS[@]}" -- "$TARGET" "cd '$REMOTE' && test ! -e '$NAME' && test ! -e '$NAME.sha256' && mv -- '.incoming-$NAME/$NAME' '$NAME' && mv -- '.incoming-$NAME/$NAME.sha256' '$NAME.sha256' && rmdir -- '.incoming-$NAME'"
+printf 'Remote encrypted artifact verified: %s\n' "$NAME"
