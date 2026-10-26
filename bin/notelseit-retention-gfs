@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""Read-only GFS retention planner; validates every artifact before proposing anything."""
+import argparse
+import datetime as dt
+import importlib.machinery
+import importlib.util
+import pathlib
+import re
+import sys
+
+MODULE = pathlib.Path(__file__).with_name("notelseit-retention-audit")
+loader = importlib.machinery.SourceFileLoader("retention_audit", str(MODULE))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+audit = importlib.util.module_from_spec(spec)
+loader.exec_module(audit)
+
+PATTERN = re.compile(r"^run-(\d{8}T\d{6})Z-\d+(?:\.tar\.age)?$")
+
+
+def timestamp(name):
+    match = PATTERN.fullmatch(name)
+    if not match:
+        raise ValueError(f"Invalid backup identifier: {name}")
+    return dt.datetime.strptime(match.group(1), "%Y%m%dT%H%M%S").replace(tzinfo=dt.timezone.utc)
+
+
+def choose(names, daily, weekly, monthly):
+    """Newest backup per distinct UTC day, ISO week and calendar month.
+
+    Each quota counts distinct periods containing verified backups, not all
+    calendar periods; does not assume backups exist in missing periods.
+    """
+    dated = sorted(((timestamp(name), name) for name in names), reverse=True)
+    keep = {}
+    days, weeks, months = set(), set(), set()
+    for when, name in dated:
+        day = when.date()
+        week = (when.isocalendar().year, when.isocalendar().week)
+        month = (when.year, when.month)
+        reasons = []
+        if len(days) < daily and day not in days:
+            days.add(day)
+            reasons.append("daily")
+        if len(weeks) < weekly and week not in weeks:
+            weeks.add(week)
+            reasons.append("weekly")
+        if len(months) < monthly and month not in months:
+            months.add(month)
+            reasons.append("monthly")
+        if reasons:
+            keep[name] = reasons
+    if dated and dated[0][1] not in keep:
+        keep[dated[0][1]] = ["latest-safety"]
+    return keep, [name for _, name in dated]
+
+
+def main():
+    parser = argparse.ArgumentParser(description="READ ONLY GFS retention; NEVER deletes")
+    parser.add_argument("--backup-root", required=True, type=pathlib.Path)
+    parser.add_argument("--type", required=True, choices=("local", "encrypted"))
+    parser.add_argument("--daily", type=int, default=7)
+    parser.add_argument("--weekly", type=int, default=4)
+    parser.add_argument("--monthly", type=int, default=12)
+    args = parser.parse_args()
+    root = args.backup_root
+    if not root.is_absolute() or not root.is_dir() or root.is_symlink() or root == pathlib.Path("/"):
+        parser.error("backup root must be an absolute non-symlink directory other than /")
+    if not all(1 <= n <= 10000 for n in (args.daily, args.weekly, args.monthly)):
+        parser.error("daily/weekly/monthly must each be 1..10000")
+    try:
+        names = audit.inventory_local(root) if args.type == "local" else audit.inventory_encrypted(root)
+        keep, ordered = choose(names, args.daily, args.weekly, args.monthly)
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(f"GFS BLOCKED: {exc}; no files deleted", file=sys.stderr)
+        return 1
+    print(f"GFS DRY RUN — {len(ordered)} verified {args.type} backup(s); no files deleted")
+    print(f"POLICY daily={args.daily} weekly={args.weekly} monthly={args.monthly} (UTC, ISO weeks)")
+    for name in ordered:
+        if name in keep:
+            print(f"KEEP\t{name}\t{','.join(keep[name])}")
+        else:
+            print(f"CANDIDATE_ONLY\t{name}")
+    print("WARNING: candidates are not approved deletions; offsite restore and key availability unverified.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
