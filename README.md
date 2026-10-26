@@ -57,3 +57,17 @@ bash bin/notelseit-push-ssh --backup-dir /absolute/backups/run-YYYYMMDDTHHMMSSZ-
 ```
 
 Requires `ssh` and `rsync` on both hosts, a dedicated remote account with write access, and **pre-provisioned verified host keys** in known_hosts. Does not use `--delete`. Remote checksum verification protects against accidental transfer corruption but not a compromised destination. Use server-side access controls and encryption at rest. Test with disposable data and destinations only. No automatic retention is provided.
+
+## Phase 2: staged restores and read-only retention proposals
+
+The `bin/notelseit-restore` command uses `bin/safe_extract.py` (Python 3 standard library) to reject tar path traversal, symlinks, hardlinks and device files. It only restores files into a **new** staging directory as an unprivileged user. SQL is copied, not imported. Test archives and failure cases in disposable environments before production use.
+
+A read-only retention planner is available:
+
+```bash
+bash bin/notelseit-retention-plan --backup-root /srv/notelseit-backups --keep-latest 7
+```
+
+This prints candidates by run timestamp. **It never deletes backup data**; it is not yet a safe automated retention engine. Retention must additionally account for remote copies, verified integrity, and future incremental chains.
+
+Security tests use synthetic tar files to ensure unsafe members are rejected. End-to-end MySQL restore, remote SSH integration, encryption at rest and automatic retention remain unimplemented and require further work. Do not interpret passing tests as a production disaster-recovery guarantee.

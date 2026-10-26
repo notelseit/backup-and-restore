@@ -1,61 +1,48 @@
 #!/usr/bin/env bash
-# Restore to a NEW, EMPTY staging directory only. Never restores in place.
+# Restore files to a NEW staging directory. Does not import SQL or overwrite.
 set -Eeuo pipefail
 umask 077
-usage() { echo "Usage: bash $0 --backup-dir /absolute/run-directory --target /absolute/new-empty-dir" >&2; exit 2; }
-die() { echo "ERROR: $*" >&2; exit 1; }
-[[ $# -eq 4 ]] || usage
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+[[ $# -eq 4 ]] || die "Usage: bash $0 --backup-dir /absolute/run --target /absolute/new-dir"
 BACKUP=''; TARGET=''
 while (($#)); do
-  case $1 in
+  case "$1" in
     --backup-dir) BACKUP=$2; shift 2;;
     --target) TARGET=$2; shift 2;;
-    *) usage;;
+    *) die "Unknown option";;
   esac
 done
+[[ $EUID -ne 0 ]] || die "Restore must run as an unprivileged account"
 [[ $BACKUP == /* && -d $BACKUP && ! -L $BACKUP ]] || die "Invalid backup directory"
 [[ $TARGET == /* && $TARGET != / && ! -e $TARGET && ! -L $TARGET ]] || die "Target must be a new path"
+command -v python3 >/dev/null || die "Python 3 required"
 BACKUP=$(cd -- "$BACKUP" && pwd -P)
 PARENT=$(dirname -- "$TARGET")
-[[ -d $PARENT && ! -L $PARENT ]] || die "Target parent must exist and not be a symlink"
+[[ -d $PARENT && ! -L $PARENT ]] || die "Target parent invalid"
 PARENT=$(cd -- "$PARENT" && pwd -P)
 TARGET="$PARENT/$(basename -- "$TARGET")"
 [[ $TARGET != "$BACKUP" && $TARGET != "$BACKUP/"* && $BACKUP != "$TARGET/"* ]] || die "Overlapping paths"
-[[ -f $BACKUP/SHA256SUMS && -f $BACKUP/MANIFEST.tsv ]] || die "Missing manifest"
+[[ -f $BACKUP/SHA256SUMS && ! -L $BACKUP/SHA256SUMS && -f $BACKUP/MANIFEST.tsv && ! -L $BACKUP/MANIFEST.tsv ]] || die "Missing safe manifest"
 ( cd -- "$BACKUP" && sha256sum --check --status SHA256SUMS ) || die "Checksum validation failed"
-# Ensure all archives are ordinary files and refuse unsafe tar entries. No extraction as root.
-[[ $EUID -ne 0 ]] || die "Restore must run as an unprivileged account"
+EXTRACTOR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/safe_extract.py
 mkdir -m 700 -- "$TARGET"
-cleanup() { echo "Staging retained at $TARGET; inspect before use" >&2; }
+cleanup() { echo "Staging retained at $TARGET for inspection" >&2; }
 trap cleanup EXIT
 i=0
 while IFS=$'\t' read -r kind archive source; do
   [[ $kind == files || $kind == database ]] || die "Invalid manifest type"
-  [[ $archive =~ ^(files-[0-9]+\.tar\.gz|mysql-[A-Za-z0-9_]+\.sql\.gz)$ ]] || die "Invalid manifest filename"
+  [[ $archive =~ ^(files-[0-9]+\.tar\.gz|mysql-[A-Za-z0-9_]+\.sql\.gz)$ ]] || die "Invalid archive name"
   [[ -f $BACKUP/$archive && ! -L $BACKUP/$archive ]] || die "Invalid archive"
   if [[ $kind == files ]]; then
     dest="$TARGET/files-$i"
     mkdir -m 700 -- "$dest"
-    # Require all paths to be relative and free of traversal; reject links and device files.
-    while IFS= read -r member; do
-      [[ $member == . || $member == ./ || $member == ./* ]] || die "Absolute or malformed archive path"
-      [[ $member != *'/../'* && $member != *'/..' && $member != '../'* ]] || die "Parent traversal"
-    done < <(tar -tzf "$BACKUP/$archive")
-    # Reject links and special files (including hard links, devices and FIFOs).
-    while IFS= read -r listing; do
-      case "${listing:0:1}" in
-        -|d) ;;
-        *) die "Unsafe archive member type (links and special files forbidden)";;
-      esac
-    done < <(tar -tvzf "$BACKUP/$archive")
-    # GNU tar extraction into isolated new staging dir; never honor ownership.
-    tar --no-same-owner --no-same-permissions --keep-old-files -xzf "$BACKUP/$archive" -C "$dest"
+    python3 "$EXTRACTOR" "$BACKUP/$archive" "$dest" || die "Archive rejected"
     printf '%s\t%s\n' "$dest" "$source"
   else
     cp -- "$BACKUP/$archive" "$TARGET/$archive"
-    printf 'Database SQL archive staged (not imported): %s\n' "$TARGET/$archive"
+    printf 'SQL staged without import: %s\n' "$TARGET/$archive"
   fi
   i=$((i+1))
 done < "$BACKUP/MANIFEST.tsv"
 trap - EXIT
-echo "Restore staged successfully in $TARGET"
+echo "Restore staged in $TARGET"

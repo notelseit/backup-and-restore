@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Read-only retention planner. Prints eligible runs; NEVER deletes anything.
+set -Eeuo pipefail
+umask 077
+die(){ printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+[[ $# -eq 4 && $1 == --backup-root && $3 == --keep-latest ]] || die "Usage: bash $0 --backup-root /absolute/backups --keep-latest N"
+ROOT=$2; KEEP=$4
+[[ $ROOT == /* && -d $ROOT && ! -L $ROOT ]] || die "Invalid backup root"
+[[ $KEEP =~ ^[1-9][0-9]*$ ]] || die "Keep count must be positive"
+# Limit a pathological count and integer overflow
+(("${#KEEP}" <= 6)) || die "Count too large"
+declare -a runs=()
+while IFS= read -r -d '' path; do
+  name=${path##*/}
+  [[ $name =~ ^run-[0-9]{8}T[0-9]{6}Z-[0-9]+$ ]] || continue
+  [[ -f "$path/SHA256SUMS" && -f "$path/MANIFEST.tsv" && ! -L "$path/SHA256SUMS" && ! -L "$path/MANIFEST.tsv" ]] || continue
+  runs+=("$name")
+done < <(find "$ROOT" -mindepth 1 -maxdepth 1 -type d -name 'run-*' -print0)
+if (("${#runs[@]}" <= KEEP)); then
+  echo "No retention candidates; no files deleted."
+  exit 0
+fi
+mapfile -t sorted < <(printf '%s\n' "${runs[@]}" | LC_ALL=C sort -r)
+printf 'DRY RUN ONLY — proposed candidates (never deleted):\n'
+for ((i=KEEP;i<${#sorted[@]};i++)); do printf '%s\n' "${sorted[i]}"; done
