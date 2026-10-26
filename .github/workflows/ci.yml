@@ -86,3 +86,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y age
       - name: Audit and corruption scenarios
         run: bash tests/retention-audit.sh
+
+  gfs-retention:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python syntax
+        run: python3 -m py_compile bin/notelseit-retention-gfs tests/gfs-retention.py
+      - name: GFS selection and safety tests
+        run: python3 tests/gfs-retention.py
