@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Conservative, READ-ONLY local retention inventory.
+
+Never deletes. Refuses to suggest candidates if any inventory entry is unsafe,
+incomplete or corrupt. Files must be regular, no symlinks, no unexpected names.
+A SHA-256 match detects accidental corruption, not malicious rewriting.
+"""
+import argparse
+import hashlib
+import pathlib
+import re
+import sys
+
+RUN = re.compile(r"run-\d{8}T\d{6}Z-\d+")
+CIPHER = re.compile(r"run-\d{8}T\d{6}Z-\d+\.tar\.age")
+CHECK = re.compile(r"([0-9a-fA-F]{64})  ([A-Za-z0-9_.-]+)")
+BLOCKED = {"SHA256SUMS", "MANIFEST.tsv"}
+CHUNK = 1024 * 1024
+
+
+def regular(path):
+    return path.is_file() and not path.is_symlink()
+
+
+def digest(path):
+    h = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(CHUNK), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def verify_run(run):
+    checks = run / "SHA256SUMS"
+    manifest = run / "MANIFEST.tsv"
+    if not regular(checks) or not regular(manifest):
+        raise ValueError("missing or symlinked manifest/checksums")
+    lines = checks.read_text(encoding="utf-8").splitlines()
+    if not lines:
+        raise ValueError("empty checksum list")
+    names = set()
+    for line in lines:
+        match = CHECK.fullmatch(line)
+        if not match:
+            raise ValueError("unsafe checksum entry")
+        checksum, name = match.groups()
+        if name in names or name == "SHA256SUMS":
+            raise ValueError("duplicate/self-referential checksum")
+        names.add(name)
+        file = run / name
+        if not regular(file) or digest(file) != checksum.lower():
+            raise ValueError("missing/corrupt file")
+    if "MANIFEST.tsv" not in names:
+        raise ValueError("manifest not checksummed")
+    permitted = names | {"SHA256SUMS"}
+    for entry in run.iterdir():
+        if entry.name not in permitted or not regular(entry):
+            raise ValueError("unexpected file or directory")
+    if not manifest.read_text(encoding="utf-8").strip():
+        raise ValueError("empty backup manifest")
+
+
+def inventory_local(root):
+    names = []
+    for entry in root.iterdir():
+        name = entry.name
+        if name.startswith(".") or name == "lost+found":
+            continue
+        if not RUN.fullmatch(name):
+            raise ValueError(f"unknown item: {name}")
+        if not entry.is_dir() or entry.is_symlink():
+            raise ValueError(f"unsafe run directory: {name}")
+        verify_run(entry)
+        names.append(name)
+    return sorted(names, reverse=True)
+
+
+def inventory_encrypted(root):
+    names = []
+    entries = {e.name: e for e in root.iterdir()}
+    for name, entry in entries.items():
+        if name.startswith("."):
+            raise ValueError(f"incomplete or unexpected item: {name}")
+        if name.endswith(".sha256"):
+            continue
+        if not CIPHER.fullmatch(name) or not regular(entry):
+            raise ValueError(f"unknown or unsafe artifact: {name}")
+        sidecar_name = name + ".sha256"
+        sidecar = entries.get(sidecar_name)
+        if sidecar is None or not regular(sidecar):
+            raise ValueError(f"missing checksum for {name}")
+        match = CHECK.fullmatch(sidecar.read_text(encoding="utf-8").strip())
+        if not match or match.group(2) != name or digest(entry) != match.group(1).lower():
+            raise ValueError(f"invalid checksum for {name}")
+        names.append(name)
+    for name in entries:
+        if name.endswith(".sha256") and name[:-7] not in names:
+            raise ValueError(f"orphan checksum: {name}")
+    return sorted(names, reverse=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Safe read-only retention plan; never deletes")
+    parser.add_argument("--backup-root", required=True, type=pathlib.Path)
+    parser.add_argument("--type", required=True, choices=("local", "encrypted"))
+    parser.add_argument("--keep-latest", type=int, required=True)
+    args = parser.parse_args()
+    root = args.backup_root
+    if not root.is_absolute() or not root.is_dir() or root.is_symlink() or root == pathlib.Path("/"):
+        parser.error("backup root must be an existing absolute non-symlink directory other than /")
+    if not 1 <= args.keep_latest <= 100000:
+        parser.error("keep-latest must be 1..100000")
+    try:
+        runs = inventory_local(root) if args.type == "local" else inventory_encrypted(root)
+    except (OSError, UnicodeError, ValueError) as exc:
+        print(f"RETENTION BLOCKED: {exc}; nothing deleted", file=sys.stderr)
+        return 1
+    # A minimum of one valid backup is always protected, regardless of requested count.
+    print(f"READ-ONLY PLAN — {len(runs)} verified {args.type} backup(s); no files deleted")
+    for item in runs[:args.keep_latest]:
+        print(f"KEEP\t{item}")
+    for item in runs[args.keep_latest:]:
+        print(f"CANDIDATE_ONLY\t{item}")
+    print("WARNING: no proof of offsite recoverability or private-key availability.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
