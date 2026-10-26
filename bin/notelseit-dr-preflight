@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Read-only disaster-recovery readiness verifier for a local completed backup.
+
+Does not extract archives or delete data. Ensures manifest/archive correspondence,
+valid gzip tar streams and checksums. No claim that database credentials or keys work.
+"""
+import argparse
+import importlib.machinery
+import importlib.util
+import pathlib
+import re
+import sys
+import tarfile
+
+p = pathlib.Path(__file__).with_name("notelseit-retention-audit")
+loader = importlib.machinery.SourceFileLoader("audit", str(p))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+audit = importlib.util.module_from_spec(spec)
+loader.exec_module(audit)
+
+FILE = re.compile(r"files-[0-9]+\\.tar\\.gz")
+DB = re.compile(r"mysql-[A-Za-z0-9_]+\\.sql\\.gz")
+
+
+def check(root):
+    audit.verify_run(root)
+    rows = root.joinpath("MANIFEST.tsv").read_text(encoding="utf8").splitlines()
+    expected = set()
+    for row in rows:
+        parts = row.split("\t")
+        if len(parts) != 3:
+            raise ValueError("Malformed manifest entry")
+        kind, name, source = parts
+        if kind == "files" and FILE.fullmatch(name) and source.startswith("/"):
+            with tarfile.open(root / name, "r:gz") as archive:
+                members = archive.getmembers()
+                for member in members:
+                    path = member.name
+                    if path.startswith("/") or ".." in pathlib.PurePosixPath(path).parts:
+                        raise ValueError("Unsafe tar path")
+                    if not (member.isfile() or member.isdir()):
+                        raise ValueError("Unsafe tar member type")
+        elif kind == "database" and DB.fullmatch(name) and re.fullmatch(r"[A-Za-z0-9_]+", source):
+            import gzip
+            with gzip.open(root / name, "rb") as gz:
+                while gz.read(1024 * 1024):
+                    pass
+        else:
+            raise ValueError("Unknown manifest artifact or source")
+        if name in expected:
+            raise ValueError("Duplicate manifest artifact")
+        expected.add(name)
+    actual = {x.name for x in root.iterdir() if x.name not in ("MANIFEST.tsv", "SHA256SUMS")}
+    if expected != actual:
+        raise ValueError("Manifest/archive mismatch")
+    return len(expected)
+
+
+def main():
+    a = argparse.ArgumentParser()
+    a.add_argument("--backup-dir", required=True, type=pathlib.Path)
+    args = a.parse_args()
+    path = args.backup_dir
+    if not path.is_absolute() or not path.is_dir() or path.is_symlink() or not audit.RUN.fullmatch(path.name):
+        a.error("Expected a completed absolute backup run directory")
+    try:
+        count = check(path)
+    except (ValueError, OSError, UnicodeError, tarfile.TarError, EOFError) as exc:
+        print(f"DR PRE-FLIGHT FAILED: {exc}", file=sys.stderr)
+        return 1
+    print(f"DR PRE-FLIGHT PASS: {count} archive(s); manual recovery rehearsal still required")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
