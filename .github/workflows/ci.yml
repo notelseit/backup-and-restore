@@ -10,8 +10,10 @@ jobs:
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Bash syntax
-        run: bash -n bin/notelseit-backup bin/notelseit-restore bin/notelseit-push-ssh tests/smoke.sh
+        run: bash -n bin/notelseit-backup bin/notelseit-restore bin/notelseit-push-ssh tests/smoke.sh tests/security.sh
       - name: ShellCheck
         run: shellcheck bin/notelseit-backup bin/notelseit-restore tests/smoke.sh
+      - name: Security tests
+        run: bash tests/security.sh
       - name: Smoke test
-        run: bash tests/smoke.sh
+        run: bash tests/smoke.sh && bash tests/security.sh
