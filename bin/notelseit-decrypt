@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Decrypt to a new tar file only; does not extract, restore or import databases.
+set -Eeuo pipefail
+umask 077
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+[[ $# -eq 6 ]] || die "Usage: bash $0 --input /absolute/file.tar.age --identity /absolute/privatekey --output /absolute/new.tar"
+INPUT=''; IDENTITY=''; OUTPUT=''
+while (($#)); do
+  case $1 in
+    --input) INPUT=$2; shift 2;;
+    --identity) IDENTITY=$2; shift 2;;
+    --output) OUTPUT=$2; shift 2;;
+    *) die "Invalid argument";;
+  esac
+done
+command -v age >/dev/null || die "age missing"
+[[ $INPUT == /* && -f $INPUT && ! -L $INPUT && $INPUT == *.tar.age ]] || die "Invalid encrypted input"
+[[ $IDENTITY == /* && -f $IDENTITY && ! -L $IDENTITY ]] || die "Invalid identity path"
+[[ $OUTPUT == /* && $OUTPUT == *.tar && ! -e $OUTPUT && ! -L $OUTPUT ]] || die "Output must be a new .tar file"
+mode=$(stat -c %a "$IDENTITY"); (( (8#$mode & 0077) == 0 )) || die "Identity must not be group/world accessible"
+( set -C; : > "$OUTPUT" ) 2>/dev/null || die "Output already exists"
+cleanup() { rm -f -- "$OUTPUT"; }
+trap cleanup EXIT
+age --decrypt -i "$IDENTITY" -o "$OUTPUT" "$INPUT" || die "Decryption failed"
+[[ -s $OUTPUT ]] || die "Decrypted archive empty"
+tar -tf "$OUTPUT" >/dev/null || die "Invalid decrypted tar archive"
+trap - EXIT
+printf 'Decrypted archive (NOT extracted): %s\n' "$OUTPUT"
