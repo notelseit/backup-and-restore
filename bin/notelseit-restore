@@ -25,6 +25,8 @@ TARGET="$PARENT/$(basename -- "$TARGET")"
 ( cd -- "$BACKUP" && sha256sum --check --status SHA256SUMS ) || die "Checksum validation failed"
 # Ensure all archives are ordinary files and refuse unsafe tar entries. No extraction as root.
 [[ $EUID -ne 0 ]] || die "Restore must run as an unprivileged account"
+command -v python3 >/dev/null || die "Python 3 required for safe extraction"
+EXTRACTOR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/safe_extract.py
 mkdir -m 700 -- "$TARGET"
 cleanup() { echo "Staging retained at $TARGET; inspect before use" >&2; }
 trap cleanup EXIT
@@ -36,26 +38,5 @@ while IFS=$'\t' read -r kind archive source; do
   if [[ $kind == files ]]; then
     dest="$TARGET/files-$i"
     mkdir -m 700 -- "$dest"
-    # Require all paths to be relative and free of traversal; reject links and device files.
-    while IFS= read -r member; do
-      [[ $member == . || $member == ./ || $member == ./* ]] || die "Absolute or malformed archive path"
-      [[ $member != *'/../'* && $member != *'/..' && $member != '../'* ]] || die "Parent traversal"
-    done < <(tar -tzf "$BACKUP/$archive")
-    # Reject links and special files (including hard links, devices and FIFOs).
-    while IFS= read -r listing; do
-      case "${listing:0:1}" in
-        -|d) ;;
-        *) die "Unsafe archive member type (links and special files forbidden)";;
-      esac
-    done < <(tar -tvzf "$BACKUP/$archive")
-    # GNU tar extraction into isolated new staging dir; never honor ownership.
-    tar --no-same-owner --no-same-permissions --keep-old-files -xzf "$BACKUP/$archive" -C "$dest"
-    printf '%s\t%s\n' "$dest" "$source"
-  else
-    cp -- "$BACKUP/$archive" "$TARGET/$archive"
-    printf 'Database SQL archive staged (not imported): %s\n' "$TARGET/$archive"
-  fi
-  i=$((i+1))
-done < "$BACKUP/MANIFEST.tsv"
-trap - EXIT
-echo "Restore staged successfully in $TARGET"
+    python3 "$EXTRACTOR" "$BACKUP/$archive" "$dest" || die "Unsafe archive rejected"
+
