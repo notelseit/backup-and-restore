@@ -18,8 +18,8 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 audit = importlib.util.module_from_spec(spec)
 loader.exec_module(audit)
 
-FILE = re.compile(r"files-[0-9]+\\.tar\\.gz")
-DB = re.compile(r"mysql-[A-Za-z0-9_]+\\.sql\\.gz")
+FILE = re.compile(r"files-[0-9]+\.tar\.gz")
+DB = re.compile(r"mysql-[A-Za-z0-9_]+\.sql\.gz")
 
 
 def check(root):
