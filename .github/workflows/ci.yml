@@ -63,7 +63,9 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
           ssh -o BatchMode=yes backupci@127.0.0.1 'echo ssh-ready'
       - name: SSH round trip and failure scenarios
-        run: bash tests/ssh-integration.sh\n      - name: Encrypted SSH disaster-recovery round trip\n        run: bash tests/encrypted-ssh-integration.sh
+        run: bash tests/ssh-integration.sh
+      - name: Encrypted SSH disaster-recovery round trip
+        run: bash tests/encrypted-ssh-integration.sh
 
   encryption:
     runs-on: ubuntu-latest
