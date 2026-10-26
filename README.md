@@ -87,3 +87,16 @@ bash bin/notelseit-decrypt --input /srv/offsite/run.tar.age --identity /secure/i
 The decrypt command **never extracts or restores** files: an administrator must review the resulting tar in an isolated environment. Never put decrypted archives inside publicly served directories.
 
 Limitations: encrypted export is a standalone artifact and is not yet integrated with `notelseit-push-ssh`, automated schedules or retention. Current backup runs and unencrypted staging remain on disk. For secure remote-only workflows, the transport needs an explicit encrypted-artifact mode, and raw backup transport should be disabled by policy. The package is not production-ready.
+
+## Phase 6: experimental encrypted SSH offsite round-trip
+
+The `bin/notelseit-push-encrypted` transport accepts **only** a pre-encrypted `.tar.age` artifact and matching SHA-256 sidecar. It uses a dedicated non-root SSH account, pre-verified SSH host keys and remote checksum verification before publishing. Unlike `bin/notelseit-push-ssh`, it never uploads the plaintext backup run.
+
+```bash
+bash bin/notelseit-encrypt --backup-dir /srv/backups/run-YYYYMMDDTHHMMSSZ-PID --recipient age1... --output /srv/exports/run-YYYYMMDDTHHMMSSZ-PID.tar.age
+bash bin/notelseit-push-encrypted --input /srv/exports/run-YYYYMMDDTHHMMSSZ-PID.tar.age --ssh-user backupuser --ssh-host backup.example.net --remote-dir /srv/offsite
+```
+
+The SSH CI integration downloads the remote encrypted artifact back, validates its sidecar, decrypts with a separate local private identity and compares recovered synthetic file content. It also checks duplicate upload rejection and changed ciphertext rejection.
+
+**Security limitations:** no end-to-end automated encryption policy (unencrypted local runs still exist), no encryption key escrow or rotation, no fully atomic publication of the pair `artifact + SHA-256 sidecar`, no remote retention, and no production disaster recovery certification. SSH host keys must be provisioned and validated out of band; `ssh-keyscan` in CI is for the disposable local test host only, not production host trust.
