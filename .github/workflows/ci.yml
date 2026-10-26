@@ -77,3 +77,12 @@ jobs:
         run: bash -n bin/notelseit-encrypt bin/notelseit-decrypt tests/encryption.sh
       - name: Encryption/decryption round trip
         run: bash tests/encryption.sh
+
+  retention-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install age
+        run: sudo apt-get update && sudo apt-get install -y age
+      - name: Audit and corruption scenarios
+        run: bash tests/retention-audit.sh
