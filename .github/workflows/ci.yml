@@ -10,9 +10,9 @@ jobs:
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Bash syntax
-        run: bash -n bin/notelseit-backup bin/notelseit-restore bin/notelseit-push-ssh tests/smoke.sh tests/security.sh
+        run: bash -n bin/notelseit-backup bin/notelseit-restore bin/notelseit-push-ssh bin/notelseit-push-encrypted tests/smoke.sh tests/security.sh tests/encrypted-ssh-integration.sh
       - name: ShellCheck
-        run: shellcheck bin/notelseit-backup bin/notelseit-restore tests/smoke.sh
+        run: shellcheck bin/notelseit-backup bin/notelseit-restore bin/notelseit-push-encrypted tests/smoke.sh tests/encrypted-ssh-integration.sh
       - name: Security tests
         run: bash tests/security.sh
       - name: Smoke test
@@ -46,7 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install SSH server and rsync
-        run: sudo apt-get update && sudo apt-get install -y openssh-server openssh-client rsync
+        run: sudo apt-get update && sudo apt-get install -y openssh-server openssh-client rsync age
       - name: Set up isolated SSH transport
         run: |
           sudo useradd --create-home --shell /bin/bash backupci
@@ -63,7 +63,7 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
           ssh -o BatchMode=yes backupci@127.0.0.1 'echo ssh-ready'
       - name: SSH round trip and failure scenarios
-        run: bash tests/ssh-integration.sh
+        run: bash tests/ssh-integration.sh\n      - name: Encrypted SSH disaster-recovery round trip\n        run: bash tests/encrypted-ssh-integration.sh
 
   encryption:
     runs-on: ubuntu-latest
