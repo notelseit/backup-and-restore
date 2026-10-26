@@ -64,3 +64,14 @@ jobs:
           ssh -o BatchMode=yes backupci@127.0.0.1 'echo ssh-ready'
       - name: SSH round trip and failure scenarios
         run: bash tests/ssh-integration.sh
+
+  encryption:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install age
+        run: sudo apt-get update && sudo apt-get install -y age
+      - name: Check bash syntax
+        run: bash -n bin/notelseit-encrypt bin/notelseit-decrypt tests/encryption.sh
+      - name: Encryption/decryption round trip
+        run: bash tests/encryption.sh
