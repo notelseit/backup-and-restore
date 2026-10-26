@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Encrypt a verified backup run to a separate, non-existing destination with age.
+# Original backup is never removed or modified. Decryption produces only a tar archive.
+set -Eeuo pipefail
+umask 077
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+[[ $# -eq 6 ]] || die "Usage: bash $0 --backup-dir /absolute/run --recipient age1... --output /absolute/new.tar.age"
+RUN_DIR=''; RECIPIENT=''; OUTPUT=''
+while (($#)); do
+  case "$1" in
+    --backup-dir) RUN_DIR=$2; shift 2;;
+    --recipient) RECIPIENT=$2; shift 2;;
+    --output) OUTPUT=$2; shift 2;;
+    *) die "Invalid parameter";;
+  esac
+done
+command -v age >/dev/null || die "age binary missing"
+command -v tar >/dev/null || die "tar missing"
+[[ $RUN_DIR == /* && -d $RUN_DIR && ! -L $RUN_DIR ]] || die "Run must be an absolute real directory"
+[[ $RECIPIENT =~ ^age1[023456789acdefghjklmnpqrstuvwxyz]{50,}$ ]] || die "Invalid age recipient format"
+[[ $OUTPUT == /* && $OUTPUT == *.tar.age && ! -e $OUTPUT && ! -L $OUTPUT ]] || die "Output must be a new absolute .tar.age file"
+RUN_DIR=$(cd -- "$RUN_DIR" && pwd -P)
+[[ $(basename "$RUN_DIR") =~ ^run-[0-9]{8}T[0-9]{6}Z-[0-9]+$ ]] || die "Not a completed run"
+[[ -f "$RUN_DIR/SHA256SUMS" && ! -L "$RUN_DIR/SHA256SUMS" && -f "$RUN_DIR/MANIFEST.tsv" ]] || die "Missing checksums"
+( cd -- "$RUN_DIR" && sha256sum --check --status SHA256SUMS ) || die "Backup verification failed"
+OUT_PARENT=$(dirname -- "$OUTPUT")
+[[ -d $OUT_PARENT && ! -L $OUT_PARENT ]] || die "Output parent must exist"
+OUT_PARENT=$(cd -- "$OUT_PARENT" && pwd -P)
+OUTPUT="$OUT_PARENT/$(basename -- "$OUTPUT")"
+[[ $OUTPUT != "$RUN_DIR/"* ]] || die "Encrypted output cannot be within source run"
+# Create securely with O_EXCL semantics; trap removes partial output on failure.
+( set -C; : > "$OUTPUT" ) 2>/dev/null || die "Output already exists"
+cleanup() { rm -f -- "$OUTPUT"; }
+trap cleanup EXIT
+tar --format=posix -C "$(dirname -- "$RUN_DIR")" -cf - -- "$(basename -- "$RUN_DIR")" |
+  age -r "$RECIPIENT" -o "$OUTPUT"
+[[ -s $OUTPUT ]] || die "Encrypted output is empty"
+trap - EXIT
+sha256sum -- "$OUTPUT" > "$OUTPUT.sha256"
+printf 'Encrypted artifact: %s\n' "$OUTPUT"
