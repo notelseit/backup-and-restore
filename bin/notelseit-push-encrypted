@@ -18,7 +18,8 @@ done
 [[ $USER =~ ^[a-z_][a-z0-9_-]*$ && $USER != root ]] || die "Dedicated non-root SSH user required"
 [[ $HOST =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || die "Unsafe hostname"
 [[ $REMOTE =~ ^/[a-zA-Z0-9_./-]+$ && $REMOTE != / && $REMOTE != *'..'* ]] || die "Unsafe remote directory"
-command -v ssh >/dev/null && command -v rsync >/dev/null || die "ssh and rsync required"
+command -v ssh >/dev/null || die "ssh required"
+command -v rsync >/dev/null || die "rsync required"
 INPUT=$(cd -- "$(dirname -- "$INPUT")" && pwd -P)/$(basename -- "$INPUT")
 NAME=$(basename -- "$INPUT")
 [[ $NAME =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*\.tar\.age$ ]] || die "Unsafe input name"
