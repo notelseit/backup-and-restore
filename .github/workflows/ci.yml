@@ -40,3 +40,27 @@ jobs:
         env:
           TEST_MYSQL_PASSWORD: test_local_only_password
         run: bash tests/mariadb-integration.sh
+
+  ssh-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SSH server and rsync
+        run: sudo apt-get update && sudo apt-get install -y openssh-server openssh-client rsync
+      - name: Set up isolated SSH transport
+        run: |
+          sudo useradd --create-home --shell /bin/bash backupci
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keygen -q -t ed25519 -N "" -f ~/.ssh/id_ed25519
+          sudo install -d -m 700 -o backupci -g backupci /home/backupci/.ssh
+          sudo cp ~/.ssh/id_ed25519.pub /home/backupci/.ssh/authorized_keys
+          sudo chown backupci:backupci /home/backupci/.ssh/authorized_keys
+          sudo chmod 600 /home/backupci/.ssh/authorized_keys
+          sudo mkdir -p /run/sshd
+          sudo systemctl start ssh
+          ssh-keyscan -H 127.0.0.1 >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 600 ~/.ssh/known_hosts
+          ssh -o BatchMode=yes backupci@127.0.0.1 'echo ssh-ready'
+      - name: SSH round trip and failure scenarios
+        run: bash tests/ssh-integration.sh
