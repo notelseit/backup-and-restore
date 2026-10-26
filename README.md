@@ -100,3 +100,14 @@ bash bin/notelseit-push-encrypted --input /srv/exports/run-YYYYMMDDTHHMMSSZ-PID.
 The SSH CI integration downloads the remote encrypted artifact back, validates its sidecar, decrypts with a separate local private identity and compares recovered synthetic file content. It also checks duplicate upload rejection and changed ciphertext rejection.
 
 **Security limitations:** no end-to-end automated encryption policy (unencrypted local runs still exist), no encryption key escrow or rotation, no fully atomic publication of the pair `artifact + SHA-256 sidecar`, no remote retention, and no production disaster recovery certification. SSH host keys must be provisioned and validated out of band; `ssh-keyscan` in CI is for the disposable local test host only, not production host trust.
+
+## Phase 7: conservative read-only retention audit
+
+The new `bin/notelseit-retention-audit` makes **no deletions and has no apply mode**. It inventories complete local run directories or local age-encrypted artifacts and verifies all listed SHA-256 checksums before producing candidates. Any unexpected, incomplete, corrupt or unrecognized entry blocks the entire plan. Keep at least one verified run, even if the requested retention is smaller; `--keep-latest` accepts only 1 through 100000.
+
+```bash
+python3 bin/notelseit-retention-audit --backup-root /srv/notelseit-backups --type local --keep-latest 7
+python3 bin/notelseit-retention-audit --backup-root /srv/encrypted-exports --type encrypted --keep-latest 14
+```
+
+This tool assumes the root contains only runs and the backup lock file, or only paired `.tar.age` and `.sha256` files. Incomplete transfers and unknown files block evaluation. A `CANDIDATE_ONLY` entry is **not permission to delete**: SHA-256 cannot prove recovery success, key availability, independent offsite copies or authenticity against an attacker who can replace manifests. No GFS grandfather-father-son selection, time-based retention, cross-destination coordination, locking or destructive operations are implemented. Do not automate deletion from this output.
