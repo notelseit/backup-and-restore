@@ -64,8 +64,10 @@ def inventory_local(root):
     names = []
     for entry in root.iterdir():
         name = entry.name
-        if name.startswith(".") or name == "lost+found":
+        if name == ".backup.lock" and regular(entry):
             continue
+        if name.startswith(".") or name == "lost+found":
+            raise ValueError(f"unverified or incomplete item: {name}")
         if not RUN.fullmatch(name):
             raise ValueError(f"unknown item: {name}")
         if not entry.is_dir() or entry.is_symlink():
