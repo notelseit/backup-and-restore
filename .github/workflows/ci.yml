@@ -95,3 +95,10 @@ jobs:
         run: python3 -m py_compile bin/notelseit-retention-gfs tests/gfs-retention.py
       - name: GFS selection and safety tests
         run: python3 tests/gfs-retention.py
+
+  dr-preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate DR preflight
+        run: bash tests/dr-preflight.sh
