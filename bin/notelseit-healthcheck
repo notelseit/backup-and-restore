@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""Read-only backup health report, designed for cron and monitoring systems.
+
+Exit 0 only with a recent verified backup; exit 2 for stale/missing/corrupt data.
+Never deletes, modifies, decrypts or uploads backup data. JSON contains no secrets.
+"""
+import argparse
+import datetime as dt
+import importlib.machinery
+import importlib.util
+import json
+import pathlib
+import sys
+
+AUDIT = pathlib.Path(__file__).with_name("notelseit-retention-audit")
+loader = importlib.machinery.SourceFileLoader("backup_audit", str(AUDIT))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+audit = importlib.util.module_from_spec(spec)
+loader.exec_module(audit)
+
+
+def check(root, kind, max_age_hours, now):
+    names = audit.inventory_local(root) if kind == "local" else audit.inventory_encrypted(root)
+    if not names:
+        raise ValueError("no completed verified backups")
+    name = names[0]
+    timestamp = name.removeprefix("run-").split("Z-", 1)[0]
+    created = dt.datetime.strptime(timestamp, "%Y%m%dT%H%M%S").replace(tzinfo=dt.timezone.utc)
+    age = (now - created).total_seconds() / 3600
+    if age < -1:
+        raise ValueError("backup timestamp in the future")
+    if age > max_age_hours:
+        raise ValueError(f"latest backup stale ({age:.1f}h old)")
+    return {"status": "ok", "kind": kind, "latest": name,
+            "age_hours": round(age, 2), "verified_runs": len(names),
+            "checked_at": now.isoformat()}
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Read-only backup health check")
+    parser.add_argument("--backup-root", type=pathlib.Path, required=True)
+    parser.add_argument("--type", choices=("local", "encrypted"), required=True)
+    parser.add_argument("--max-age-hours", type=float, default=36)
+    args = parser.parse_args()
+    if not 1 <= args.max_age_hours <= 8760:
+        parser.error("max age must be between 1 and 8760 hours")
+    root = args.backup_root
+    if not root.is_absolute() or not root.is_dir() or root.is_symlink() or root == pathlib.Path("/"):
+        parser.error("backup root must be an existing absolute directory other than /")
+    try:
+        result = check(root, args.type, args.max_age_hours, dt.datetime.now(dt.timezone.utc))
+    except (OSError, UnicodeError, ValueError) as exc:
+        result = {"status": "critical", "kind": args.type, "message": str(exc),
+                  "checked_at": dt.datetime.now(dt.timezone.utc).isoformat()}
+    print(json.dumps(result, sort_keys=True))
+    return 0 if result["status"] == "ok" else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
