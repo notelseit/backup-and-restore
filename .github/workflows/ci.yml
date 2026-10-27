@@ -102,3 +102,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate DR preflight
         run: bash tests/dr-preflight.sh
+
+  monitoring:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python syntax and monitoring tests
+        run: |
+          python3 -m py_compile bin/notelseit-healthcheck tests/healthcheck.py
+          python3 tests/healthcheck.py

@@ -130,3 +130,14 @@ Output classes: `KEEP` (protected and why) and `CANDIDATE_ONLY` (not selected by
 `python3 bin/notelseit-dr-preflight --backup-dir /absolute/run-YYYYMMDDTHHMMSSZ-PID` validates checksums, manifest coverage and archive structure before any attempted restore. It never extracts, overwrites or deletes data. A successful preflight is **not** an end-to-end disaster recovery certificate: the operator still must test restoring a complete offsite copy to an isolated server, including databases, private-key recovery, service configuration and applications. The archive preflight does not guarantee capacity, live-database consistency or credentials.
 
 Release gates before enabling destructive retention: (1) all CI jobs pass; (2) restore a remote encrypted artifact using a backed-up private identity; (3) import database into an isolated MariaDB/MySQL instance and validate expected data; (4) test failure on corrupted archives and missing keys; (5) ensure two independent verified copies and a tested recovery procedure; (6) document and rehearse rollback. **No unattended deletion or production rollout is enabled by this project.**
+
+## Phase 10: external monitoring hooks (read-only)
+
+`bin/notelseit-healthcheck` emits one JSON status line and exits 0 on success, 2 on missing, stale or corrupt backup inventory. It verifies **every** complete local run or encrypted age archive in the selected directory using the fail-closed retention audit, then enforces freshness for the most recent run. It does not send email, execute webhooks, read private keys or delete files.
+
+```bash
+python3 bin/notelseit-healthcheck --backup-root /srv/notelseit-backups --type local --max-age-hours 36
+python3 bin/notelseit-healthcheck --backup-root /srv/encrypted-exports --type encrypted --max-age-hours 36
+```
+
+Integrate exit codes with an **existing** monitoring service (Zabbix, Prometheus node exporter textfile wrapper, cron monitoring, Icinga, etc.). Avoid sending detailed file paths or data to public alert endpoints. This is a diagnostic signal, not proof that the private key or a restore environment is available. The tool does not schedule backups or notify operators itself. A rollout must configure and test alert routing separately.
