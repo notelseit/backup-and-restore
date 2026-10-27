@@ -5,6 +5,7 @@ Does not extract archives or delete data. Ensures manifest/archive correspondenc
 valid gzip tar streams and checksums. No claim that database credentials or keys work.
 """
 import argparse
+import gzip
 import importlib.machinery
 import importlib.util
 import pathlib
@@ -40,8 +41,12 @@ def check(root):
                         raise ValueError("Unsafe tar path")
                     if not (member.isfile() or member.isdir()):
                         raise ValueError("Unsafe tar member type")
+            # tar parsing can stop at end-of-archive before consuming the gzip
+            # trailer. Drain the full stream to validate its CRC and length.
+            with gzip.open(root / name, "rb") as gz:
+                while gz.read(1024 * 1024):
+                    pass
         elif kind == "database" and DB.fullmatch(name) and re.fullmatch(r"[A-Za-z0-9_]+", source):
-            import gzip
             with gzip.open(root / name, "rb") as gz:
                 while gz.read(1024 * 1024):
                     pass
